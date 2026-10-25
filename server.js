@@ -121,7 +121,7 @@ app.post("/api/submit", (req, res) => {
   const visits = readJson(VISITS_FILE); visits.push({ receivedAt: new Date().toISOString(), visitorId: String(req.body.visitorId || "").slice(0, 120), page: String(req.body.page || "").slice(0, 500), referrer: String(req.body.referrer || "").slice(0, 500), screen: String(req.body.screen || "").slice(0, 80), language: String(req.body.language || "").slice(0, 80) }); writeJson(VISITS_FILE, visits); return res.json({ ok: true });
 });
 async function supabaseRequest(route, options = {}) {
-  const base = String(process.env.SUPABASE_URL || "").replace(/\\/$/, "");
+  const base = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
   const key = process.env.SUPABASE_SECRET_KEY;
   if (!base || !key) throw new Error("Supabase is not configured: add SUPABASE_URL and SUPABASE_SECRET_KEY.");
   const response = await fetch(base + route, {
@@ -134,7 +134,7 @@ async function supabaseRequest(route, options = {}) {
 }
 async function saveScreenshotToSupabase(buffer, orderId, ext) {
   const pathName = "orders/" + orderId + "." + ext;
-  const base = String(process.env.SUPABASE_URL || "").replace(/\\/$/, "");
+  const base = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
   const key = process.env.SUPABASE_SECRET_KEY;
   if (!base || !key) throw new Error("Supabase is not configured: add SUPABASE_URL and SUPABASE_SECRET_KEY.");
   const response = await fetch(base + "/storage/v1/object/payment-proofs/" + pathName, {
