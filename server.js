@@ -120,6 +120,49 @@ app.post("/api/submit", (req, res) => {
   if (req.body?.type !== "visit") return res.status(400).json({ ok: false, error: "Unsupported submission type." });
   const visits = readJson(VISITS_FILE); visits.push({ receivedAt: new Date().toISOString(), visitorId: String(req.body.visitorId || "").slice(0, 120), page: String(req.body.page || "").slice(0, 500), referrer: String(req.body.referrer || "").slice(0, 500), screen: String(req.body.screen || "").slice(0, 80), language: String(req.body.language || "").slice(0, 80) }); writeJson(VISITS_FILE, visits); return res.json({ ok: true });
 });
+async function supabaseRequest(route, options = {}) {
+  const base = String(process.env.SUPABASE_URL || "").replace(/\\/$/, "");
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (!base || !key) throw new Error("Supabase is not configured: add SUPABASE_URL and SUPABASE_SECRET_KEY.");
+  const response = await fetch(base + route, {
+    ...options,
+    headers: { apikey: key, Authorization: "Bearer " + key, ...(options.headers || {}) }
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error("Supabase HTTP " + response.status + ": " + text.slice(0, 300));
+  return text ? JSON.parse(text) : null;
+}
+async function saveScreenshotToSupabase(buffer, orderId, ext) {
+  const pathName = "orders/" + orderId + "." + ext;
+  const base = String(process.env.SUPABASE_URL || "").replace(/\\/$/, "");
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (!base || !key) throw new Error("Supabase is not configured: add SUPABASE_URL and SUPABASE_SECRET_KEY.");
+  const response = await fetch(base + "/storage/v1/object/payment-proofs/" + pathName, {
+    method: "POST",
+    headers: { apikey: key, Authorization: "Bearer " + key, "Content-Type": ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "png" ? "image/png" : "image/webp", "x-upsert": "false" },
+    body: buffer
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error("Supabase screenshot upload HTTP " + response.status + ": " + text.slice(0, 250));
+  return pathName;
+}
+async function insertOrderIntoSupabase(order, screenshotPath) {
+  const row = {
+    order_id: order.orderId, created_at: order.createdAt, customer_name: order.name,
+    customer_email: order.email, roll_number: order.rollNo, phone: order.phone,
+    batch_program: order.batchYear, items: order.items, subtotal: order.subtotal,
+    discount: order.discount, coupon: order.couponCode || null, total: order.total,
+    currency: "INR", payment_status: "PENDING_REVIEW", payment_method: "UPI",
+    upi_reference: order.upiReference, collection_status: "NOT_READY",
+    sheet_synced: false, verification_source: null, screenshot_path: screenshotPath,
+    screenshot_sha256: order.screenshotHash, payment_submitted_at: order.createdAt,
+    updated_at: order.createdAt
+  };
+  await supabaseRequest("/rest/v1/orders", {
+    method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify(row)
+  });
+}
 function saveScreenshot(dataUrl, orderId, orders) {
   const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ""));
   if (!m) throw new Error("Upload the payment screenshot as a JPG, PNG or WebP image.");
@@ -142,10 +185,21 @@ app.post("/api/submit-upi-order", async (req, res) => {
     if (orders.some(o => String(o.upiReference || "").toLowerCase() === upiReference.toLowerCase())) return res.status(409).json({ ok: false, error: "This UPI reference has already been submitted." });
     const orderId = "IITDH-" + new Date().toISOString().slice(0,10).replace(/-/g, "") + "-" + crypto.randomBytes(4).toString("hex").toUpperCase();
     const shot = saveScreenshot(req.body?.screenshot, orderId, orders);
-    const order = { ...details, orderId, screenshotFile: shot.file, screenshotHash: shot.hash, createdAt: new Date().toISOString(), currency: "INR", paymentStatus: "PAID", paymentMethod: "UPI", upiReference, paidAt: new Date().toISOString(), verificationSource: "self_reported", collectionStatus: "NOT_COLLECTED", sheetSynced: false, qrEmailStatus: "NOT_ISSUED" };
+    const screenshotPath = await saveScreenshotToSupabase(fs.readFileSync(path.join(SHOT_DIR, shot.file)), orderId, shot.file.split(".").pop());
+    const order = { ...details, orderId, screenshotFile: shot.file, screenshotHash: shot.hash, screenshotPath, createdAt: new Date().toISOString(), currency: "INR", paymentStatus: "PENDING_REVIEW", paymentMethod: "UPI", upiReference, paidAt: null, verificationSource: null, collectionStatus: "NOT_READY", sheetSynced: false, qrEmailStatus: "NOT_ISSUED" };
+    await insertOrderIntoSupabase(order, screenshotPath);
     orders.push(order); writeJson(ORDERS_FILE, orders);
-    await syncPaidOrder(order); // saves to sheet, creates collection QR, emails it (errors are logged, never lost)
-    res.status(201).json({ ok: true, orderId, paymentStatus: order.paymentStatus, collectionQrEmailed: order.qrEmailSent === true, message: "Order placed." });
+    try {
+      await appendOrderToSheet(order);
+      await supabaseRequest("/rest/v1/orders?order_id=eq." + encodeURIComponent(orderId), {
+        method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ sheet_synced: true, sheet_synced_at: new Date().toISOString(), sheet_sync_error: null })
+      });
+    } catch (sheetError) {
+      console.error("Pending order saved; Google Sheets sync failed:", sheetError.message);
+      try { await supabaseRequest("/rest/v1/orders?order_id=eq." + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ sheet_sync_error: sheetError.message.slice(0, 500) }) }); } catch {}
+    }
+    res.status(201).json({ ok: true, orderId, paymentStatus: order.paymentStatus, collectionQrEmailed: false, message: "Order submitted and pending staff bank verification." });
   } catch (e) { console.error("UPI order submission failed:", e.message); res.status(400).json({ ok: false, error: e.message || "Could not submit the order." }); }
 });
 async function updateSheetPaymentStatus(order) {
