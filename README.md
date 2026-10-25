@@ -1,41 +1,33 @@
-# IIT Dharwad Merch Store — ₹1 Test Mode + UPI UTR + Collection QR
+# IIT Dharwad Merch Store — ₹1 TEST MODE
 
-This deployment-preparation package is configured for **₹1 per item test mode**. It is not a production-price store. Do not advertise it as normal merchandise pricing.
+Every item costs exactly **₹1** (prices are enforced on the server only; coupons are disabled). This is a test build, not a real-price store.
 
-## What this version does
-- Every product costs exactly ₹1 per item, including XXL/custom-name options. Coupons are disabled so the total cannot be reduced by a coupon.
-- Students submit their UPI UTR/reference and payment screenshot.
-- The order is recorded as `PAID` with `verificationSource: self_reported`; this is **not bank verification**. When SMTP is configured, the collection QR is emailed after submission.
-- There is no separate website approval queue.
-- At distribution, staff must check the UTR and exact credited amount in the receiving bank/UPI account. The collection scanner requires a staff member to tick the bank-verification checkbox before recording collection. The QR alone is not proof of payment.
-- Google Sheets and SMTP are retained as integrations, configured with environment variables.
+## Payment option 1: Razorpay (default)
+1. The browser sends only the student's details and product choices. The **server** prices the cart (₹1 per item in test mode) and creates the Razorpay order for that exact amount.
+2. The student pays in Razorpay Checkout. The browser returns a signed result to `/api/razorpay/verify`.
+3. The server checks the signature **and then asks Razorpay's API** whether that payment is captured, for this order, in INR, for the exact amount. Only then is the order `PAID` (one atomic update; the database refuses `PAID` without a matching Razorpay order and payment id).
+4. The sheet row is written, and the collection QR is emailed. A signed webhook (`/api/razorpay/webhook`) does the same if the student closes the tab; it re-checks with Razorpay's API too, so it is idempotent.
+Keys: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` (see `.env.example`). Start with **test** keys.
 
-## Important: persistence and hosting
-The server stores order records and payment screenshots in `DATA_DIR`. For Render, configure a **persistent disk** mounted at `/var/data` and set `DATA_DIR=/var/data`. A persistent disk generally requires a paid Render service; check Render's current pricing before creating a service. Do not accept orders on a free/ephemeral filesystem because orders/screenshots can disappear after restart or redeploy.
+## Payment option 2: manual UPI, staff-verified
+1. Student pays by UPI QR, then submits their UTR and a payment screenshot.
+2. The server creates the order (`AWAITING_PAYMENT`), stores the screenshot in the **private** Supabase bucket `payment-proofs`, then sets it to **`PENDING_REVIEW`**. A student request can never make an order `PAID`.
+3. The student gets an email saying *payment pending verification* (no QR). The vendor Google Sheet shows the row as *PENDING VERIFICATION (not paid)*.
+4. Staff open `/upi-review.html`, view the screenshot through a 2-minute signed link, then check the **bank/UPI account**. To approve they must type the exact UTR and credited amount seen in the bank and tick the confirmation. Only then does the order become `PAID` (verifier + time recorded), the sheet row updates, and the collection QR is emailed.
+5. At `/collection-staff.html`, staff scan the QR. A QR works once (a single atomic database update), and the collector is recorded.
 
-A `render.yaml` is included for a Node web service. Review its plan and costs in Render before deploying. This ZIP does not deploy anything by itself.
+A screenshot or UTR is **not** proof of payment. The database itself refuses `PAID` without a verifier, QR/READY while pending, a second collection, or reverting a paid/collected order.
 
-## Local setup
-1. Install Node.js 18 or newer.
-2. Run `npm install`.
-3. Copy `.env.example` to `.env` and fill in valid Google Sheets, SMTP, and `ADMIN_TOKEN` settings. Do not share or upload `.env`.
-4. Run `npm start` and open `http://localhost:3000`.
-5. Staff collection page: `/collection-staff.html`.
-6. Health check: `/api/health`.
+## Setup
+- Hosting: Vercel (`api/index.js` + `vercel.json`); static pages from `public/`.
+- Database: apply `supabase/migrations/*` (already applied to project `kpqtgiywngjkspkuokgk`).
+- Environment variables: see `.env.example`. Create staff tokens with `node scripts/make-staff-token.js "Name"`.
+- Tests: `npm test` (no external services needed).
+- Health: `/api/health` (reports only whether things are configured).
 
-## Environment variables
-- `PORT`: supplied by the host automatically.
-- `DATA_DIR`: persistent writable directory; for Render disk use `/var/data`.
-- `GOOGLE_SERVICE_ACCOUNT_JSON_B64`: base64-encoded service-account JSON.
-- `GOOGLE_SHEETS_SPREADSHEET_ID`: spreadsheet ID.
-- `GOOGLE_SHEETS_TAB`: defaults to `Orders`.
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`: outbound email.
-- `ADMIN_TOKEN`: long random secret used by staff collection APIs.
+## Before real prices
+Update prices in both `public/config.js` and `lib/validate.js` (`PRODUCT_PRICES`), re-enable fees/coupons deliberately, and re-test totals.
 
-Never commit `.env`, service-account credentials, SMTP passwords, or the admin token. Configure secrets in the host's environment-variable dashboard.
-
-## Google Sheets
-The code expects the Orders tab to have these headers in order: `Order ID | Created At | Student Name | Institute Email | Roll Number | Phone | Batch/Program | Items | Subtotal | Discount | Coupon | Total | Currency | Payment Status | Payment Method | UPI Reference | Paid At | Collection Status | Collected At | Screenshot`.
-
-## Before using with real prices
-This is deliberately a ₹1 test build. Before selling at real prices, update both `config.js` and the server-side `PRODUCT_PRICES`, restore intended option fees/coupons, and test totals end-to-end. Confirm the receiving account's UPI ID is correct. Screenshots and UTRs are user-submitted and can be forged or reused; staff must verify actual bank credit before distribution.
+## Known limits
+- Rate limiting is in-memory per serverless instance (best-effort); add Vercel Firewall rules for stronger protection.
+- Visit analytics are no longer stored (there is no durable local disk on Vercel).

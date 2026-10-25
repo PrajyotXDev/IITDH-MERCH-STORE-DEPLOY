@@ -183,7 +183,16 @@
               <div class="flex justify-between items-center text-xl font-black pt-4 border-t-2 border-gray-300 mt-4"><span>Payable total</span><span id="checkout-cart-total"></span></div>
             </div>
             <div class="mb-6 flex items-end gap-2"><div class="flex-grow"><label for="coupon-code" class="block text-sm font-semibold text-gray-700">Coupon code</label><input type="text" id="coupon-code" name="coupon-code" class="mt-1 block w-full rounded-xl border-gray-300 shadow-sm p-3 border"></div><button id="apply-coupon-button" class="btn-primary font-bold py-3 px-5 rounded-xl transition">Apply</button></div>
-            <div class="bg-purple-50 border border-purple-100 rounded-2xl p-5 mb-6">
+            <div class="mb-5">
+              <p class="font-bold mb-2">How would you like to pay?</p>
+              <label class="flex items-start gap-3 p-4 rounded-2xl border border-gray-200 mb-2 cursor-pointer"><input type="radio" name="pay-method" value="razorpay" checked class="mt-1"><span><b>Pay online with Razorpay</b> (UPI, cards, netbanking). Confirmed automatically and your collection QR is emailed right away.</span></label>
+              <label class="flex items-start gap-3 p-4 rounded-2xl border border-gray-200 cursor-pointer"><input type="radio" name="pay-method" value="upi" class="mt-1"><span><b>Pay by UPI QR (manual verification)</b>. Staff must verify the bank credit first; your QR is emailed after that.</span></label>
+            </div>
+            <div id="razorpay-box" class="bg-purple-50 border border-purple-100 rounded-2xl p-5 mb-6">
+              <p class="font-bold mb-1">Pay securely with Razorpay</p>
+              <p class="text-sm text-gray-600">Press “Pay with Razorpay” to open the secure payment window. Your order is confirmed only after Razorpay confirms the payment. Test mode: every item is ₹1.</p>
+            </div>
+            <div id="manual-upi-box" class="hidden bg-purple-50 border border-purple-100 rounded-2xl p-5 mb-6">
               <p class="font-bold mb-2">Pay using UPI</p>
               <p class="text-sm text-gray-600 mb-3">Scan this QR with your UPI app and pay the exact total. Then enter the UTR/reference from your payment app and upload a screenshot of the successful payment. Your order remains pending until staff independently verifies the bank credit. A screenshot or UTR alone is not payment proof.</p>
               <div class="flex flex-col items-center gap-3"><div id="payment-qr" class="bg-white p-3 rounded-xl border min-h-40 min-w-40 flex items-center justify-center"><span class="text-sm text-gray-500">Add items to generate QR</span></div><p class="font-bold">UPI ID: <span id="upi-id">9289886267@sbi</span></p></div>

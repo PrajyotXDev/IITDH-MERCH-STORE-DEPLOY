@@ -301,16 +301,69 @@ const readScreenshot = file => new Promise((resolve, reject) => {
   img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read that image.")); };
   img.src = url;
 });
+const payMethod = () => document.querySelector('input[name="pay-method"]:checked')?.value || "razorpay";
+const applyPayMethod = () => {
+  const rz = payMethod() === "razorpay";
+  byId("razorpay-box").classList.toggle("hidden", !rz); byId("manual-upi-box").classList.toggle("hidden", rz);
+  byId("upi-reference").required = !rz; byId("payment-screenshot").required = !rz;
+  placeOrderButton.textContent = rz ? "Pay with Razorpay →" : "Place order →";
+};
+const resetAfterOrder = () => { checkoutForm.reset(); cart = []; discount = 0; appliedCoupon = ""; couponCodeInput.value = ""; localStorage.removeItem("merchStoreCart"); localStorage.removeItem("merchStoreCheckoutForm"); renderCart(); updatePaymentQR(); productList.querySelectorAll(".product-card").forEach(updateProductCardState); setView("main"); history.pushState({view:"main"},"", "#"); applyPayMethod(); };
+const showOverlay = on => { processingOverlay.classList.toggle("hidden", !on); processingOverlay.classList.toggle("flex", on); };
+const postJson = async (url, body) => {
+  const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const text = await response.text(); let result = {}; try { result = text ? JSON.parse(text) : {}; } catch { result = {}; }
+  if (!response.ok || !result.ok) throw new Error(result.error || `Request failed (HTTP ${response.status}).`);
+  return result;
+};
+const loadRazorpayCheckout = () => window.Razorpay ? Promise.resolve() : new Promise((resolve, reject) => {
+  const s = document.createElement("script"); s.src = "https://checkout.razorpay.com/v1/checkout.js"; s.onload = resolve;
+  s.onerror = () => reject(new Error("Could not load Razorpay. Check your internet connection and try again.")); document.head.appendChild(s);
+});
+// Razorpay flow: the server prices the cart; the browser only sends product choices. The order counts as paid only after /verify succeeds server-side.
+const handleRazorpayOrder = async details => {
+  const rzPayload = { name: details.name, email: details.email, rollNo: details.rollNo, phone: details.phone, batchYear: details.batchYear, couponCode: appliedCoupon, items: cart.map(item => ({ name: getProduct(item.id)?.name, quantity: item.quantity || 1, size: item.size, color: item.color, customName: item.customName || "N/A" })) };
+  showOverlay(true);
+  const [c] = await Promise.all([postJson("/api/razorpay/create-order", rzPayload), loadRazorpayCheckout()]);
+  showOverlay(false);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const rz = new window.Razorpay({
+      key: c.keyId, amount: c.amountPaise, currency: c.currency, order_id: c.razorpayOrderId,
+      name: "IIT DH Merch Store", description: "Order " + c.orderId, prefill: { name: details.name, email: details.email, contact: details.phone },
+      notes: { orderId: c.orderId }, theme: { color: "#4b2a7b" },
+      handler: async response => {
+        settled = true; showOverlay(true);
+        try { resolve(await postJson("/api/razorpay/verify", { orderId: c.orderId, razorpay_order_id: response.razorpay_order_id, razorpay_payment_id: response.razorpay_payment_id, razorpay_signature: response.razorpay_signature })); }
+        catch (e) { reject(new Error(e.message + " Your order ID is " + c.orderId + ". Keep it if money was deducted.")); }
+      },
+      modal: { ondismiss: () => { if (!settled) reject(new Error("Payment window closed. Nothing was charged and the order was not paid.")); } }
+    });
+    rz.on("payment.failed", r => showMessage("Payment failed: " + ((r.error && r.error.description) || "please try again") + ". You can retry in the payment window."));
+    rz.open();
+  });
+};
 const handlePlaceOrder = async event => {
   event.preventDefault();
   const name = byId("name").value.trim(), email = byId("email").value.trim(), rollNo = byId("roll_no").value.trim(), phone = byId("phone").value.trim(), batchYear = byId("batch_year").value;
   const upiReference = (byId("upi-reference")?.value || "").trim();
-  const missing = []; if (!name) missing.push("Full name"); if (!email) missing.push("Institute email"); if (!rollNo) missing.push("Roll number"); if (!phone) missing.push("WhatsApp number"); if (!batchYear) missing.push("Batch / program"); if (!upiReference) missing.push("UPI transaction reference"); if (!byId("payment-screenshot")?.files?.[0]) missing.push("Payment screenshot");
+  const missing = []; if (!name) missing.push("Full name"); if (!email) missing.push("Institute email"); if (!rollNo) missing.push("Roll number"); if (!phone) missing.push("WhatsApp number"); if (!batchYear) missing.push("Batch / program"); if (payMethod() === "upi" && !upiReference) missing.push("UPI transaction reference"); if (payMethod() === "upi" && !byId("payment-screenshot")?.files?.[0]) missing.push("Payment screenshot");
   if (missing.length) { showMessage(`Complete these fields: ${missing.join(", ")}.`); return; }
   if (!/^\d{10}$/.test(phone)) { showMessage("Enter a valid 10-digit WhatsApp number."); return; }
   if (!email.toLowerCase().endsWith("@iitdh.ac.in")) { showMessage("Please use your @iitdh.ac.in institute email."); return; }
-  if (!/^[A-Za-z0-9-]{8,80}$/.test(upiReference)) { showMessage("Enter a valid UPI UTR/reference (8–80 letters or digits)."); return; }
+  if (payMethod() === "upi" && !/^[A-Za-z0-9-]{8,80}$/.test(upiReference)) { showMessage("Enter a valid UPI UTR/reference (8–80 letters or digits)."); return; }
   if (!cart.length) { showMessage("Your bag is empty."); return; }
+  if (payMethod() === "razorpay") {
+    placeOrderButton.disabled = true;
+    try {
+      const result = await handleRazorpayOrder({ name, email, rollNo, phone, batchYear });
+      showOverlay(false);
+      showMessage(`Payment confirmed! Order ${result.orderId}. ${result.collectionQrEmailed ? "Your collection QR has been emailed to your institute email." : "We could not email your collection QR yet. Keep this order ID and contact the merch team."}`);
+      resetAfterOrder();
+    } catch (error) { showOverlay(false); showMessage(error.message || "Payment could not be completed."); }
+    finally { placeOrderButton.disabled = false; }
+    return;
+  }
   placeOrderButton.disabled = true; processingOverlay.classList.remove("hidden"); processingOverlay.classList.add("flex");
   try {
     const screenshot = await readScreenshot(byId("payment-screenshot").files[0]);
@@ -324,8 +377,8 @@ const handlePlaceOrder = async event => {
       throw new Error(`Order submission failed (HTTP ${response.status}): ${detail || "The server returned no error details."}`);
     }
     processingOverlay.classList.add("hidden"); processingOverlay.classList.remove("flex");
-    showMessage(`Order received: ${result.orderId}. Payment is PENDING bank verification. ${result.collectionQrEmailed ? "A collection QR was emailed; staff must verify the exact bank credit before handing over merchandise." : "Keep your order ID. Check your email for the collection QR."}${result.sheetSynced === false ? " The spreadsheet sync needs staff follow-up." : ""}`);
-    checkoutForm.reset(); cart = []; discount = 0; appliedCoupon = ""; couponCodeInput.value = ""; localStorage.removeItem("merchStoreCart"); localStorage.removeItem("merchStoreCheckoutForm"); renderCart(); updatePaymentQR(); productList.querySelectorAll(".product-card").forEach(updateProductCardState); setView("main"); history.pushState({view:"main"},"", "#");
+    showMessage(`Order received: ${result.orderId}. Payment is PENDING verification by staff — it is NOT confirmed yet. ${result.acknowledgementEmailed ? "We emailed an acknowledgement." : "Keep your order ID."} Your collection QR will be emailed only after staff verify the payment in the bank account.`);
+    resetAfterOrder();
   } catch (error) { processingOverlay.classList.add("hidden"); processingOverlay.classList.remove("flex"); showMessage(error.message || "Could not submit your order. Please retry."); }
   finally { placeOrderButton.disabled = false; }
 };
@@ -386,6 +439,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     history.pushState({view:"checkout"},"","#checkout");
   });
   checkoutForm.addEventListener("submit", handlePlaceOrder);
+  document.querySelectorAll('input[name="pay-method"]').forEach(r => r.addEventListener("change", applyPayMethod)); applyPayMethod();
   backToCartButton.addEventListener("click", () => { setView("main"); history.pushState({view:"main"},"","#cart-section"); });
   applyCouponButton.addEventListener("click", () => { applyCoupon(); updatePaymentQR(); });
   cartIcon.addEventListener("click", () => {

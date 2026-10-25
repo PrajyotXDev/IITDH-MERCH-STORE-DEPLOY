@@ -2,16 +2,19 @@
   "name": "iitdh-merch-store-fullstack",
   "version": "2.0.0",
   "private": true,
-  "description": "IIT Dharwad Merch Store with manual UPI verification, Google Sheets, and collection QR scanning",
+  "description": "IIT Dharwad Merch Store \u2014 \u20b91 test mode, staff-verified manual UPI, Supabase, Google Sheets, collection QR",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node --test --test-force-exit --test-timeout=20000 tests/*.test.js",
+    "check": "node --check server.js && for f in lib/*.js; do node --check $f; done"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "googleapis": "^144.0.0",

@@ -1,3 +1,2 @@
-// Vercel Node.js entrypoint. The same Express app still runs locally via server.js.
-const app = require("../server");
-module.exports = app;
+// Vercel Node.js entrypoint. All /api/* and /admin/* requests are rewritten here (see vercel.json).
+module.exports = require("../server");
