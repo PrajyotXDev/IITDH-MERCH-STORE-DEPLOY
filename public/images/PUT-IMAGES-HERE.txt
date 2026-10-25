@@ -1,0 +1,5 @@
+Add product photos in this folder. Filenames are configured in config.js.
+Recommended: images/tshirt_black_front.jpg, images/tshirt_black_back.jpg, images/tshirt_navy_front.jpg, images/tshirt_navy_back.jpg,
+images/polo_black_front.jpg, images/polo_black_back.jpg, images/polo_navy_front.jpg, images/polo_navy_back.jpg,
+images/zipper_hoodie_black_front.jpg, images/zipper_hoodie_black_back.jpg, images/cs_hoodie_black_front.jpg, images/cs_hoodie_black_back.jpg,
+images/ee_hoodie_black_front.jpg, images/ee_hoodie_black_back.jpg.
