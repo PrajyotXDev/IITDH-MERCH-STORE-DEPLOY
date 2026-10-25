@@ -224,11 +224,14 @@ app.post("/admin/orders/:orderId/retry-sheet", requireAdmin, async (req, res) =>
   try { const order = readJson(ORDERS_FILE).find(o => o.orderId === req.params.orderId); if (!order || order.paymentStatus !== "PAID") return res.status(404).json({ ok: false, error: "Paid order not found." }); if (!order.sheetSynced) await appendOrderToSheet(order); await syncPaidOrder(order); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
-app.listen(PORT, () => {
-  console.log(`IIT DH Merch Store running at http://localhost:${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/api/health`);
-  console.log(`Staff collection scanner: http://localhost:${PORT}/collection-staff.html`);
-  if (!mailTransport()) console.log("SMTP email is not configured; paid-order QR emails will not send.");
-  console.log("₹1 TEST MODE: orders are self-reported as PAID; staff must verify UTR in the receiving bank account before handing over merchandise.");
-  if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_B64 || !process.env.GOOGLE_SHEETS_SPREADSHEET_ID) console.log("Google Sheets is not configured; paid orders cannot finish syncing until credentials are added.");
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`IIT DH Merch Store running at http://localhost:${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/api/health`);
+    console.log(`Staff collection scanner: http://localhost:${PORT}/collection-staff.html`);
+    if (!mailTransport()) console.log("SMTP email is not configured; paid-order QR emails will not send.");
+    console.log("₹1 TEST MODE: orders are self-reported as PAID; staff must verify UTR in the receiving bank account before handing over merchandise.");
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_B64 || !process.env.GOOGLE_SHEETS_SPREADSHEET_ID) console.log("Google Sheets is not configured; paid orders cannot finish syncing until credentials are added.");
+  });
+}
+module.exports = app;
