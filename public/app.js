@@ -316,8 +316,13 @@ const handlePlaceOrder = async event => {
     const screenshot = await readScreenshot(byId("payment-screenshot").files[0]);
     const payload = { name, email, rollNo, phone, batchYear, couponCode: appliedCoupon, upiReference, screenshot, items: cart.map(item => ({ name: getProduct(item.id)?.name, quantity: item.quantity || 1, size: item.size, color: item.color, customName: item.customName || "N/A" })) };
     const response = await fetch("/api/submit-upi-order", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.ok) throw new Error(result.error || "Could not submit the order.");
+    const responseText = await response.text();
+    let result = {};
+    try { result = responseText ? JSON.parse(responseText) : {}; } catch { result = {}; }
+    if (!response.ok || !result.ok) {
+      const detail = result.error || (responseText ? responseText.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 220) : "No response body");
+      throw new Error(`Order submission failed (HTTP ${response.status}): ${detail || "The server returned no error details."}`);
+    }
     processingOverlay.classList.add("hidden"); processingOverlay.classList.remove("flex");
     showMessage(`Order received: ${result.orderId}. Payment is PENDING bank verification. ${result.collectionQrEmailed ? "A collection QR was emailed; staff must verify the exact bank credit before handing over merchandise." : "Keep your order ID. Check your email for the collection QR."}${result.sheetSynced === false ? " The spreadsheet sync needs staff follow-up." : ""}`);
     checkoutForm.reset(); cart = []; discount = 0; appliedCoupon = ""; couponCodeInput.value = ""; localStorage.removeItem("merchStoreCart"); localStorage.removeItem("merchStoreCheckoutForm"); renderCart(); updatePaymentQR(); productList.querySelectorAll(".product-card").forEach(updateProductCardState); setView("main"); history.pushState({view:"main"},"", "#");
