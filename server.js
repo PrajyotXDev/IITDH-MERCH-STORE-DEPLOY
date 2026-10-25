@@ -14,8 +14,9 @@ const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : pat
 const ORDERS_FILE = path.join(DATA_DIR, "orders.json");
 const VISITS_FILE = path.join(DATA_DIR, "visits.json");
 const SHOT_DIR = path.join(DATA_DIR, "screenshots");
-fs.mkdirSync(SHOT_DIR, { recursive: true });
+// Create the parent data directory before its screenshots subdirectory.
 fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(SHOT_DIR, { recursive: true });
 for (const file of [ORDERS_FILE, VISITS_FILE]) if (!fs.existsSync(file)) fs.writeFileSync(file, "[]", "utf8");
 app.disable("x-powered-by");
 app.use(express.json({ limit: "4mb" }));
