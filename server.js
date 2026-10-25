@@ -56,6 +56,31 @@ function mailTransport() {
   if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) return null;
   return nodemailer.createTransport({ host: SMTP_HOST, port: Number(SMTP_PORT), secure: String(SMTP_SECURE || "").toLowerCase() === "true" || Number(SMTP_PORT) === 465, auth: { user: SMTP_USER, pass: SMTP_PASS } });
 }
+async function sendPendingOrderEmail(order) {
+  const transport = mailTransport();
+  if (!transport) throw new Error("SMTP is not configured.");
+  const itemLines = order.items.map((i, n) => `${n + 1}. ${i.name} | ${i.color} | Size ${i.size} | Qty ${i.quantity} | ₹${i.lineTotal}`).join("\\n");
+  const body = [
+    `Hi ${order.name},`, "",
+    "We have received your IIT Dharwad Merch Store order details.",
+    `Order ID: ${order.orderId}`,
+    `Amount submitted: ₹${order.total}`,
+    `UPI reference submitted: ${order.upiReference}`, "",
+    "Payment status: PENDING REVIEW.",
+    "Our team must independently verify the actual credit in the receiving bank/UPI account. Your UTR and screenshot alone do not confirm payment.",
+    "Do not make another payment for this order. Keep your order ID for reference.", "",
+    "ITEMS", itemLines, "",
+    "A collection QR is NOT included in this acknowledgement. It will only be issued after staff confirms the bank credit.",
+    "", "IIT Dharwad Merch Store"
+  ].join("\\n");
+  await transport.sendMail({
+    from: `"IIT DH Merch Store" <${process.env.MAIL_FROM || process.env.SMTP_USER}>`,
+    to: order.email,
+    subject: `Order received — pending payment review ${order.orderId}`,
+    text: body
+  });
+  return true;
+}
 async function sendPaidOrderEmail(order, qrBuffer) {
   const transport = mailTransport(); if (!transport) return false;
   const itemLines = order.items.map((i, n) => `${n + 1}. ${i.name} | ${i.color} | Size ${i.size} | Qty ${i.quantity} | ₹${i.lineTotal}`).join("\n");
@@ -199,7 +224,14 @@ app.post("/api/submit-upi-order", async (req, res) => {
       console.error("Pending order saved; Google Sheets sync failed:", sheetError.message);
       try { await supabaseRequest("/rest/v1/orders?order_id=eq." + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ sheet_sync_error: sheetError.message.slice(0, 500) }) }); } catch {}
     }
-    res.status(201).json({ ok: true, orderId, paymentStatus: order.paymentStatus, collectionQrEmailed: false, message: "Order submitted and pending staff bank verification." });
+    let confirmationEmailSent = false;
+    try {
+      await sendPendingOrderEmail(order);
+      confirmationEmailSent = true;
+    } catch (emailError) {
+      console.error("Pending order confirmation email failed:", emailError.message);
+    }
+    res.status(201).json({ ok: true, orderId, paymentStatus: order.paymentStatus, collectionQrEmailed: false, confirmationEmailSent, message: "Order submitted and pending staff bank verification." });
   } catch (e) { console.error("UPI order submission failed:", e.message); res.status(400).json({ ok: false, error: e.message || "Could not submit the order." }); }
 });
 async function updateSheetPaymentStatus(order) {
